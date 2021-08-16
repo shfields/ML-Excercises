@@ -1,0 +1,443 @@
+---
+title: "Fields Exercises"
+author: "Scott Fields"
+date: "8/11/2021"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+```{r setup, include=FALSE}
+set.seed(5)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, fig.align='left')
+```
+
+```{r load libraries, include=FALSE}
+library(dplyr)
+library(scales)
+library(ggplot2)
+```
+Scott Fields
+full code at:
+https://github.com/shfields/ML-Exercises
+
+## Visual Story Telling Part 1
+
+I disagree with the previous conclusions as there seem to be some unaccounted for variables in his process. As we can see below the rent of a building strongly correlates with the price of buildings around it and then within similar neighborhoods, the most expensive buildings are consistently Class A. 
+```{r vs1, echo = FALSE}
+buildings <- read.csv('greenbuildings.csv')
+buildings <- buildings %>% filter(leasing_rate > 10)
+model <- lm(Rent ~ cluster_rent, data = buildings)
+plot(buildings$cluster_rent, buildings$Rent, pch = 16, col = c('green', 'blue')[as.factor(buildings$class_a)], xlab = 'Average Rent of Surrounding Buildings', ylab = 'Rent of Building', main = 'Rent vs Surrounding Area and Building Quality (Blue = Class A Building)')
+abline(model, col = 'red')
+legend(x="topright", legend = levels(as.factor(buildings$class_a)), col=c('green', 'blue'), pch=16)
+```
+Additionally we can see that while green buildings do have a higher average rent than non green buildings that seems to be because most green buildings are Class A. It is a reasonable conclusion that if you build a nice building in a nice area you will get a high rent, making a green building may help, but its hard to say whether it would cover the extra costs. 
+```{r vs1b, echo = FALSE,message=FALSE}
+buildings <- buildings %>% mutate(green_and_nice = case_when(green_rating == 1 & class_a == 1 ~ 'green/nice', green_rating == 1 & class_a == 0 ~ 'green/not nice', green_rating == 0 & class_a == 1 ~ 'not green/nice', green_rating == 0 & class_a == 0 ~ 'not green/not nice'))
+bar_df <- buildings %>% group_by(green_and_nice) %>% 
+  summarise(median = median(Rent), n = n())
+par(las = 1)
+barplot(bar_df$median, names.arg = bar_df$green_and_nice, cex.names = 1, ylab = 'median rent', col = 'light blue')
+
+```
+
+```{r vs1c, echo = FALSE}
+barplot(bar_df$n, names.arg = bar_df$green_and_nice, cex.names = 1, ylab = 'count', col = 'light blue')
+```
+
+## Visual Story Telling Part 2
+The 10 worst flights coming in to Austin by Origin and Day are from just 4 cities and 6 of the worst are on Mondays and Fridays. 
+```{r vs2a, echo = FALSE, message=FALSE}
+library(tidyr)
+abia <- read.csv('ABIA.csv')
+abia$Origin_Day <- paste(abia$Origin, abia$DayOfWeek)
+Origin_Code <- c('ATL','CVG','ORD', 'ATL', 'EWR', 'EWR', 'ORD', 'ATL', 'EWR', 'CVG')
+abia %>% mutate_all(~replace(., is.na(.), 0)) %>% 
+  group_by(Origin_Day) %>% 
+  summarise(median = median(ArrDelay), n = n()) %>% 
+  arrange(desc(median)) %>% 
+  filter(n > 100) %>% 
+  head(10) %>% 
+  ggplot(.,aes(x = reorder(Origin_Day, -median), y = median, fill = Origin_Code))+
+  geom_bar(stat= 'identity') +
+  theme_minimal() +
+  xlab('Origin and Day (1 = Monday)')+
+  ylab('Median Delay')+
+  ggtitle('Delays at ABIA based on day of the Week and Origin')
+```
+
+## Portfolio Modeling
+The three portfolios I made were a large growth portfolio, a technology portfolio, and an oil and gas portfolio. The large growth portfolio was made up of SPY (S&P 500), Vanguard Total World, and QQQ, a NASDAQ composite. The Tech collection was made up of Vanguard IT ETF, a cloud computing ETF, a Semiconductors ETF, and a FinTech ETF. THe O&G portfolio was made up of a US oil ETF, a US natural gas ETF, and a BRENT (European Oil) ETF.  
+\newline
+Large Growth  
+Large growth stocks performed well with an average gain of over $1,000, people normally invest in these because of how steady their growth is as they encapsulate the whole market. 
+```{r Port1, echo = FALSE, message=FALSE, warning=FALSE}
+library(mosaic)
+library(quantmod)
+library(foreach)
+
+# SPY, Vanguard Total World, NASDAQ
+large_growth_etfs = c('SPY', 'VT', 'QQQ')
+my_symbols = getSymbols(large_growth_etfs, from = '2016-01-01')
+SPYa = adjustOHLC(SPY)
+VTa = adjustOHLC(VT)
+QQQa = adjustOHLC(QQQ)
+all_returns = cbind(ClCl(SPYa),ClCl(VTa),ClCl(QQQa))
+all_returns = as.matrix(na.omit(all_returns))
+
+initial_wealth = 100000
+sim1 = foreach(i=1:5000, .combine='rbind') %do% {
+	total_wealth = initial_wealth
+	weights = c(0.5, 0.25, 0.25)
+	holdings = weights * total_wealth
+	n_days = 20
+	wealthtracker = rep(0, n_days)
+	for(today in 1:n_days) {
+		return.today = resample(all_returns, 1, orig.ids=FALSE)
+		holdings = holdings + holdings*return.today
+		total_wealth = sum(holdings)
+		wealthtracker[today] = total_wealth
+	}
+	wealthtracker
+}
+
+hist(sim1[,n_days]- initial_wealth, breaks=30, xlab = 'Gains after 20 days',main = 'Histogram of Gains and Losses in 5000 Simulations of 20 Days')
+
+print(paste('Average Gain: $', round(mean(sim1[,n_days] - initial_wealth), 2)))
+# 5% value at risk:
+print(paste('Value at Risk at 5%:', round(quantile(sim1[,n_days]- initial_wealth, prob=0.05), 2)))
+```
+Technology  
+I made one portfolio technology ETFs because they have a tendency to make a lot of gains while also being quite volatile and that's exactly what we got from the simulations. While the average return was higher than large growth, the 5% worst case scenario was also worse, showing a lot of risk from this portfolio.
+```{r Port3, echo = FALSE, message=FALSE, warning=FALSE}
+# vanguard IT, cloud computing, Semiconductors, FinTech
+tech_etfs = c('VGT', 'SKYY', 'SMH', 'FINX')
+my_symbols = getSymbols(tech_etfs, from = '2016-01-01')
+for(ticker in tech_etfs) {
+	expr = paste0(ticker, "a = adjustOHLC(", ticker, ")")
+	eval(parse(text=expr))
+}
+all_returns = cbind(ClCl(VGTa),ClCl(SKYYa),ClCl(SMHa), ClCl(FINXa))
+all_returns = as.matrix(na.omit(all_returns))
+
+#sim
+initial_wealth = 100000
+sim2 = foreach(i=1:5000, .combine='rbind') %do% {
+	total_wealth = initial_wealth
+	weights = c(0.25, 0.25, 0.25, .25)
+	holdings = weights * total_wealth
+	n_days = 20
+	wealthtracker = rep(0, n_days)
+	for(today in 1:n_days) {
+		return.today = resample(all_returns, 1, orig.ids=FALSE)
+		holdings = holdings + holdings*return.today
+		total_wealth = sum(holdings)
+		wealthtracker[today] = total_wealth
+	}
+	wealthtracker
+}
+
+hist(sim2[,n_days]- initial_wealth, breaks=30, xlab = 'Gains after 20 days',main = 'Histogram of Gains and Losses in 5000 Simulations of 20 Days')
+
+print(paste('Average Gain: $', round(mean(sim2[,n_days] - initial_wealth), 2)))
+# 5% value at risk:
+print(paste('Value at Risk at 5%:', round(quantile(sim2[,n_days]- initial_wealth, prob=0.05), 2)))
+```
+Oil and Gas  
+I wanted one of the portfolios to be based on commodities because they have a tendency to be very stable relative to the stock market but this oil and gas portfolio performed very poorly with its average return and VaR being significantly worse than both Large Growth and Technology portfolios.  
+
+```{r Port4, echo = FALSE, message=FALSE, warning=FALSE}
+# us oil, natural gas, brent
+oil_etfs = c('USO', 'UNG', 'BNO')
+my_symbols = getSymbols(oil_etfs, from = '2016-01-01')
+for(ticker in oil_etfs) {
+	expr = paste0(ticker, "a = adjustOHLC(", ticker, ")")
+	eval(parse(text=expr))
+}
+all_returns = cbind(ClCl(USOa),ClCl(UNGa),ClCl(BNOa))
+all_returns = as.matrix(na.omit(all_returns))
+
+#sim
+initial_wealth = 100000
+sim3 = foreach(i=1:5000, .combine='rbind') %do% {
+	total_wealth = initial_wealth
+	weights = c(0.34, 0.33, 0.33)
+	holdings = weights * total_wealth
+	n_days = 20
+	wealthtracker = rep(0, n_days)
+	for(today in 1:n_days) {
+		return.today = resample(all_returns, 1, orig.ids=FALSE)
+		holdings = holdings + holdings*return.today
+		total_wealth = sum(holdings)
+		wealthtracker[today] = total_wealth
+	}
+	wealthtracker
+}
+
+hist(sim3[,n_days]- initial_wealth, breaks=30, xlab = 'Gains after 20 days',main = 'Histogram of Gains and Losses in 5000 Simulations of 20 Days')
+
+print(paste('Average Gain: $', round(mean(sim3[,n_days] - initial_wealth), 2)))
+# 5% value at risk:
+print(paste('Value at Risk at 5%:', round(quantile(sim3[,n_days]- initial_wealth, prob=0.05), 2)))
+```
+
+## Market Segmentation
+```{r MS1, echo = FALSE, message=FALSE, warning=FALSE}
+marketing <- read.csv('social_marketing.csv')
+marketing <- marketing[-c(1)]
+
+marketing_scaled = scale(marketing, center = TRUE, scale = TRUE)
+marketing_distance_matrix = dist(marketing_scaled, method='euclidean')
+
+
+
+```
+I applied a hierarchical clustering model to group customers into 8 main clusters with 5 of them being sizable enough that I would recommend focusing on them as markets.  
+\newline
+Below are the clusters with the number of customers in each. 
+```{r MS2, echo = FALSE}
+library(Rfast)
+hier_marketing = hclust(marketing_distance_matrix, method='complete')
+
+cluster1 = cutree(hier_marketing, k=8)
+summary(factor(cluster1))
+```
+
+Starting with the biggest cluster, #2, we're going to be able to learn the least about these customers because there are so many of them. Below we can see the top three classes of tweets this cluster sends and it seems like the biggest group of customers for NutrientH20 are college students that play video games. So marketing to young people and understanding online culture is a must for this brand. 
+``` {r cluster 2, echo = FALSE}
+c2 = which(cluster1 == 2)
+c2_colmeans = colMeans(data.frame(marketing_scaled[c2,]))
+c2_colmeans[match(nth(c2_colmeans, 1, descending = T), c2_colmeans)]
+c2_colmeans[match(nth(c2_colmeans, 2, descending = T), c2_colmeans)]
+c2_colmeans[match(nth(c2_colmeans, 3, descending = T), c2_colmeans)]
+```
+CLuster 1 on the other hand seems to be focused on people living an active healthy lifestyle. Marketing should emphasize the health benefits that I assume NutrientH20 has. 
+``` {r cluster 1, echo = FALSE}
+c1 = which(cluster1 == 1)
+c1_colmeans = colMeans(data.frame(marketing_scaled[c1,]))
+c1_colmeans[match(nth(c1_colmeans, 1, descending = T), c1_colmeans)]
+c1_colmeans[match(nth(c1_colmeans, 2, descending = T), c1_colmeans)]
+c1_colmeans[match(nth(c1_colmeans, 3, descending = T), c1_colmeans)]
+```
+Cluster 3 seems to be focused on art and entertainment, if further research found that there was a specific tv show or movie series was particularly resonant with this market, a celebrity endorsement from said tv show or movie might go a long way. 
+``` {r cluster 3, echo = FALSE}
+c3 = which(cluster1 == 3)
+c3_colmeans = colMeans(data.frame(marketing_scaled[c3,]))
+c3_colmeans[match(nth(c3_colmeans, 1, descending = T), c3_colmeans)]
+c3_colmeans[match(nth(c3_colmeans, 2, descending = T), c3_colmeans)]
+c3_colmeans[match(nth(c3_colmeans, 3, descending = T), c3_colmeans)]
+```
+Cluster 4 seems to mostly use twitter for talking about politics and news so there might not be much to learn here from a marketing standpoint. 
+``` {r cluster 4, echo = FALSE}
+c4 = which(cluster1 == 4)
+c4_colmeans = colMeans(data.frame(marketing_scaled[c4,]))
+c4_colmeans[match(nth(c4_colmeans, 1, descending = T), c4_colmeans)]
+c4_colmeans[match(nth(c4_colmeans, 2, descending = T), c4_colmeans)]
+c4_colmeans[match(nth(c4_colmeans, 3, descending = T), c4_colmeans)]
+```
+Cluster 5 seems to be the classic stereotypical "Faith, Football, Family" guy, so marketing towards parents and sports fans may be a wise choice. 
+``` {r cluster 5, echo = FALSE}
+c5 = which(cluster1 == 5)
+c5_colmeans = colMeans(data.frame(marketing_scaled[c5,]))
+c5_colmeans[match(nth(c5_colmeans, 1, descending = T), c5_colmeans)]
+c5_colmeans[match(nth(c5_colmeans, 2, descending = T), c5_colmeans)]
+c5_colmeans[match(nth(c5_colmeans, 3, descending = T), c5_colmeans)]
+```
+
+
+## Austhor Attribution
+
+```{r aa1, echo = FALSE, include=FALSE}
+library(RCurl)
+library(tm) 
+library(tidyverse)
+library(slam)
+library(proxy)
+
+readerPlain = function(fname){
+				readPlain(elem=list(content=readLines(fname)), 
+							id=fname, language='en') }
+
+
+# Trying stuff with just one person
+file_list = Sys.glob('./C50train/AaronPressman/*.txt')
+aaron = lapply(file_list, readerPlain) 
+
+documents_raw = Corpus(VectorSource(aaron))
+my_documents = documents_raw %>%
+  tm_map(content_transformer(tolower))  %>% 
+  tm_map(content_transformer(removeNumbers)) %>%    
+  tm_map(content_transformer(removePunctuation)) %>%  
+  tm_map(content_transformer(stripWhitespace)) %>% 
+  tm_map(content_transformer(removeWords), stopwords("en"))
+DTM_aaron = DocumentTermMatrix(my_documents)
+DTM_aaron = removeSparseTerms(DTM_aaron, .95)
+tfidf_aaron = weightTfIdf(DTM_aaron)
+X = as.matrix(tfidf_aaron)
+
+X = X[, -which(colSums(X) == 0)]
+pca_aaron = prcomp(X, scale = TRUE)
+summary(pca_aaron)$importance
+```
+
+```{r aa2, echo = FALSE, include=FALSE}
+names = read.csv('names.txt')
+file_paths = read.csv('file_paths.txt')
+i = 1
+for(path in file_paths$path){
+  file_list = Sys.glob(path)
+  author_file_list = lapply(file_list, readerPlain) 
+  
+  documents_raw = Corpus(VectorSource(author_file_list))
+  my_documents = documents_raw %>%
+    tm_map(content_transformer(tolower))  %>% 
+    tm_map(content_transformer(removeNumbers)) %>%    
+    tm_map(content_transformer(removePunctuation)) %>%  
+    tm_map(content_transformer(stripWhitespace)) %>% 
+    tm_map(content_transformer(removeWords), stopwords("en"))
+  DTM_author = DocumentTermMatrix(my_documents)
+  DTM_author = removeSparseTerms(DTM_author, .95)
+  tfidf_author = weightTfIdf(DTM_author)
+  X = data.frame(as.matrix(tfidf_author))
+  X['author'] = names$name[i]
+  if(i == 1){
+    tfidf_master = X
+  }
+  else{
+    tfidf_master = bind_rows(tfidf_master, X)
+  }
+  i = i + 1
+}
+```
+For this problem I began by reading in all the training files and converted all words to lower case, removed numbers, punctuation, and white space, and removed stop words. Then I created a Document Term Matrix of each file and removed sparse terms at a 95% level.I added a column with the authors name and then combined all the matricies using bind_rows(). Then I repeated the entire process wit the test data but limited their matricies to the columns from the training set and combined the train and test data to perform Principal Components Analysis. Below is the chart of cumulative importanmce as the number of components increased.  
+```{r aa3, echo = FALSE}
+master_columns = colnames(tfidf_master)
+file_paths_test = read.csv('file_paths_test.txt')
+i = 1
+for(path in file_paths_test$path){
+  file_list = Sys.glob(path)
+  author_file_list = lapply(file_list, readerPlain) 
+  
+  documents_raw = Corpus(VectorSource(author_file_list))
+  my_documents = documents_raw %>%
+    tm_map(content_transformer(tolower))  %>% 
+    tm_map(content_transformer(removeNumbers)) %>%    
+    tm_map(content_transformer(removePunctuation)) %>%  
+    tm_map(content_transformer(stripWhitespace)) %>% 
+    tm_map(content_transformer(removeWords), stopwords("en"))
+  DTM_author = DocumentTermMatrix(my_documents)
+  DTM_author = removeSparseTerms(DTM_author, .95)
+  tfidf_author = weightTfIdf(DTM_author)
+  X = data.frame(as.matrix(tfidf_author))
+  X = X[, names(X) %in% master_columns]
+  X['author'] = names$name[i]
+  tfidf_master = bind_rows(tfidf_master, X)
+  i = i + 1
+}
+
+```
+
+```{r aa4, echo = FALSE}
+tfidf_master[is.na(tfidf_master)] <- 0
+tfidf_pca <- subset(tfidf_master, select = -c(author))
+tfidf_pca = tfidf_pca[, -which(colSums(tfidf_pca) == 0)]
+pca_results = prcomp(tfidf_pca, scale = TRUE)
+importances <- data.frame(summary(pca_results)$importance)
+write.csv(importances, 'importances.csv')
+write.csv(pca_results$x, 'pca_results.csv')
+```
+
+```{r aa5, echo = FALSE}
+importances_t = data.frame(t(importances))
+importances_t$num <- 1:nrow(importances_t)
+plot(importances_t$num, importances_t$Cumulative.Proportion, xlab = 'Number of Principal Components', ylab = 'Cumulative Importance')
+
+```
+
+I decided to use the first 1,000 Principal Components as my predictors to reduce dimensionality while still retaining about 67% of total importance and prediction power. I trained my [2500 row X 1000 column] training set on an xgboost model that used 5 fold cross validation on 50 rounds, and had an out of fold training accuracy of almost 89%
+
+```{r aa6, echo = FALSE, message=FALSE, warning=FALSE}
+library(xgboost)
+library(caret)
+author_num <- 0:length(names$name)
+names(author_num) <- names$name
+
+x_train = data.frame(pca_results$x[,1:1000])
+x_test = x_train[2501:5000,]
+x_train = x_train[1:2500,]
+y_train = data.frame(tfidf_master$author[1:2500])
+y_test = data.frame(tfidf_master$author[2501:5000])
+y_train$author_num = author_num[y_train[,1]]
+y_test$author_num = author_num[y_test[,1]]
+
+numberOfClasses <- 50
+xgb_params <- list("objective" = "multi:softprob",
+                   "eval_metric" = "mlogloss",
+                   "num_class" = numberOfClasses)
+nround    <- 50
+cv.nfold  <- 5
+
+train_matrix <- xgb.DMatrix(data = as.matrix(x_train), label = as.matrix(y_train$author_num))
+test_matrix <- xgb.DMatrix(data = as.matrix(x_test), label = as.matrix(y_test$author_num))
+
+cv_model <- xgb.cv(params = xgb_params,
+                   data = train_matrix, 
+                   nrounds = nround,
+                   nfold = cv.nfold,
+                   verbose = FALSE,
+                   prediction = TRUE)
+
+```
+
+
+```{r aa7, echo = FALSE}
+OOF_prediction <- data.frame(cv_model$pred) %>%
+  mutate(max_prob = max.col(., ties.method = "last"),
+         label = y_train$author_num + 1)
+confusionMatrix(factor(OOF_prediction$max_prob),
+                factor(OOF_prediction$label))
+```
+
+On the test set the model achieved an accuracy of 57% which is a significant improvement of 2% accuracy of blind guessing.
+
+```{r aa8, echo = FALSE}
+bst_model <- xgb.train(params = xgb_params,
+                       data = train_matrix,
+                       nrounds = nround)
+
+# Predict hold-out test set
+test_pred <- predict(bst_model, newdata = test_matrix)
+test_prediction <- matrix(test_pred, nrow = numberOfClasses,
+                          ncol=length(test_pred)/numberOfClasses) %>%
+  t() %>%
+  data.frame() %>%
+  mutate(label = y_train$author_num + 1,
+         max_prob = max.col(., "last"))
+# confusion matrix of test set
+confusionMatrix(factor(test_prediction$max_prob),
+                factor(test_prediction$label),
+                mode = "everything")
+
+```
+
+
+## Association Rules
+```{r ar1, echo = FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(arules)
+library(dplyr)
+groceries <- read.transactions('groceries.txt', sep =',')
+rules <- apriori(groceries, parameter = list(support=.005, confidence = .2, maxlen = 2))
+
+
+
+```
+For this problem I decided to set a minimum support of .005 to encourage even rare pairs and a confidence of .2 to find pairs that really were exclusive to each other. I found that people like to buy similar products to each other that aren't necessarily compliments like onions and other vegetables or grapes and tropical fruits. I was surprised that the second highest lift belonged to berries and whipped/sour cream which does not seem like a good combination to me, but maybe its a regional thing. 
+```{r ar2, echo = FALSE, message=FALSE, warning=FALSE, results = 'hide'}
+top_10 = rules %>% head(n = 10, by = "lift") %>% inspect
+top_10$combo <- paste(top_10$lhs, top_10$rhs)
+par(las = 2)
+par(mar = c(4.25,12.5,1,1))
+barplot(top_10$lift, names.arg = top_10$combo, horiz = TRUE, col = 'light blue', xlab = 'Lift')
+```
+
